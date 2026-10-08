@@ -1,10 +1,109 @@
 ---
 name: vscode-cpp-troubleshooting
-description: Diagnose and fix VS Code C/C++ run/debug failures on Windows, including Code Runner running code in the read-only Output panel so cin/scanf cannot receive keyboard input, PowerShell parsing user input as commands, cd without /d failing to switch drives, Code Runner's $dir variable trailing-backslash escaping breaking quoted paths, and Chinese text printed by printf/cout showing up as mojibake such as 「璇疯緭鍏ヤ竴涓暣鏁帮細」 because a UTF-8 source file is rendered through the console's GBK code page (936). Also covers read-only "health check" requests asking whether VS Code can compile, run, and debug C/C++ at all (toolchain / extension / settings inspection plus a throwaway end-to-end compile + gdb breakpoint test, without modifying anything). This skill should be used when a user reports symptoms such as "code runs but cannot debug", "input then Enter does nothing", "表达式或语句中包含意外的标记", "ParserError / UnexpectedToken", "Invalid argument" from ld.exe, "No such file or directory" from cc1.exe, or "'70' 不是内部或外部命令", or "printf/cout 输出的中文变成乱码 / 璇疯緭鍏ヤ竴涓暣鏁帮細 / 终端中文全是问号或方块" in VS Code with C/C++, or asks to check whether their VS Code environment can compile / run / debug normally.
+description: Configure, verify, diagnose and fix VS Code C/C++ environments on Windows, end to end. Three modes — (1) ZERO-TO-ONE SETUP: install the MinGW-w64 toolchain (gcc/g++/gdb) via winget, install the required extensions (ms-vscode.cpptools, formulahendry.code-runner, Chinese language pack) including offline .vsix installation when the marketplace TLS connection fails, write the user-level settings.json / snippets and the per-project .vscode/{tasks,launch,c_cpp_properties,settings}.json, and scaffold the one-problem-one-folder project structure; (2) POST-SETUP SELF-CHECK: validate every config file, assert the executorMap contains all three defences, and run an end-to-end compile → run → gdb-breakpoint test proving the whole chain works; (3) TROUBLESHOOTING: fix run/debug failures such as Code Runner running code in the read-only Output panel so cin/scanf cannot receive keyboard input, PowerShell parsing user input as commands, cd without /d failing to switch drives, Code Runner's $dir trailing-backslash escaping breaking quoted paths, and Chinese printf/cout output showing as mojibake like 「璇疯緭鍏ヤ竴涓暣鏁帮細」 because a UTF-8 source file is rendered through the console's GBK code page (936). Use this skill when a user asks to set up / configure / install a C or C++ environment for VS Code, or reports "code runs but cannot debug", "input then Enter does nothing", "表达式或语句中包含意外的标记", "ParserError / UnexpectedToken", "Invalid argument" from ld.exe, "No such file or directory" from cc1.exe, "'70' 不是内部或外部命令", "printf/cout 输出中文乱码 / 璇疯緭鍏ヤ竴涓暣鏁帮細 / 终端中文全是问号或方块", or asks whether their VS Code can compile / run / debug C/C++ normally.
 agent_created: true
 ---
 
-# VS Code C/C++ 运行调试故障排查（Windows）
+# VS Code C/C++ 环境配置 · 检测 · 故障排查（Windows）
+
+## 三种使用模式
+
+本 skill 覆盖完整闭环，先判断用户处于哪个阶段：
+
+| 模式 | 触发场景 | 入口 | 是否改文件 |
+|---|---|---|---|
+| **① 从零配置** | 「帮我配置 C 语言环境」「VS Code 用不了」「扩展和配置丢了」 | 见下方「配置流程」 | ✅ 改 |
+| **② 配置后自检** | 「配置好了吗」「能正常用吗」 | 见下方「自检流程」 | 只读（除非发现问题） |
+| **③ 故障排查** | 报错、乱码、卡住、不能调试 | 见「症状 → 根因对照表」 | ✅ 改 |
+
+> **默认偏好（重要）**：国内教学场景下，源文件多为 UTF-8、学员常写中文提示，
+> 因此**默认采用「故障 E 方案 1」**（executorMap 前置 `chcp 65001`），
+> 让中文输出一步到位，免去逐个文件改编码。
+
+---
+
+## 配置流程（从零 → 可用）
+
+配置本质上是**五步**，每步的详细操作见 `references/`：
+
+### 第 1 步：检查电脑现状
+
+先探明「已有什么、还缺什么」，避免重复安装。
+→ 详见 `references/step1-prereq-check.md`
+
+**核心产物**：一份「缺什么」清单。典型结论有三种：
+- gcc 齐全 + 扩展齐全 → 只需补配置，直接跳第 4 步
+- 有 gcc、缺扩展 → 第 3 + 4 步
+- 无 gcc → 第 2 + 3 + 4 步
+
+### 第 2 步：安装编译器工具链（仅缺时）
+
+```bash
+winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT
+```
+→ 详见 `references/step2-install-toolchain.md`
+
+> ⚠️ 装完必须**新开终端**（PATH 修改需重开生效）再验证 `gcc --version`。
+
+### 第 3 步：安装 VS Code 扩展
+
+必需 3 个：`ms-vscode.cpptools`、`formulahendry.code-runner`、
+`ms-ceintl.vscode-language-pack-zh-hans`（最后一个可选）。
+→ 详见 `references/step3-install-extensions.md`
+（含**市场连不上时的离线 .vsix 安装法**与**大文件断点续传技巧**）
+
+### 第 4 步：写入配置
+
+| 层级 | 文件 | 模板 |
+|---|---|---|
+| 用户级 | `%APPDATA%\Code\User\settings.json` | `assets/user-settings.json` |
+| 用户级 | `%APPDATA%\Code\User\snippets\c.json` | `assets/snippets-c.json` |
+| 项目级 | `<项目>\.vscode\tasks.json` | `assets/tasks.json` |
+| 项目级 | `<项目>\.vscode\launch.json` | `assets/launch.json` |
+| 项目级 | `<项目>\.vscode\c_cpp_properties.json` | `assets/c_cpp_properties.json` |
+| 项目级 | `<项目>\.vscode\settings.json` | `assets/vscode-settings.json` |
+
+→ 详见 `references/step4-write-config.md`
+
+**模板全部使用 `${env:LOCALAPPDATA}` 而非硬编码用户名，换机器无需修改。**
+
+> ⚠️ **最容易踩的坑**：`launch.json` 的 `preLaunchTask` 必须与 `tasks.json` 里某个任务的
+> `label` **完全一致**。改了任务名却忘同步，F5 会报「找不到 preLaunchTask 指定的任务」。
+
+### 第 5 步：配置后自检（必做，不可省）
+
+**只改配置不实测 = 未验证。** 必须跑通下面的自检清单。
+→ 详见 `references/step5-verify.md`
+
+---
+
+## 自检流程（配置后验证 / 用户问"能用吗"）
+
+### 必查五组
+
+1. **配置文件语法** —— 剥掉 `//` 注释后再按 JSON 解析（VS Code 宽容注释，标准解析器不宽容）
+2. **三项防线是否齐全** —— 逐条断言 executorMap 的内容（见下表）
+3. **扩展是否齐备** —— `code --list-extensions` 必须同时含 cpptools 与 code-runner
+4. **跨盘符实测** —— 从 C 盘出发编译 D 盘项目，验证 `cd /d` 真的生效
+5. **全链路实测** —— 临时目录跑「编译 → 运行 → 断点命中 → 变量可读」，测完即删
+
+### 三项防线断言表（executorMap）
+
+| 断言 | 防守故障 | 检查方式 |
+|---|---|---|
+| `chcp 65001` 在最前 | E（中文乱码） | `cmd.strip().startswith('chcp 65001')` |
+| 含 `cd /d` | C（跨盘符静默失败） | `'cd /d' in cmd` |
+| 用 `$dirWithoutTrailingSlash` 且无裸 `$dir` | D（反斜杠转义） | 正则 `\$dir(?!Without)` 不应命中 |
+
+> 完整的可执行校验脚本见 `references/step5-verify.md`，可直接复制运行。
+
+### 自检报告
+
+输出模板见 `references/environment-report-template.md`。
+
+---
+
+## 故障排查（按症状定位）
 
 ## 适用范围
 
@@ -227,7 +326,7 @@ cd <项目目录> && cmd //c "chcp 65001 >nul && gcc no.c -g -Wall -o no.exe && 
 
 ## 标准交付配置
 
-完整可用的 `settings.json`（用户级）：
+完整可用的 `settings.json`（用户级）—— 可直接复制 `assets/user-settings.json`：
 
 ```json
 {
@@ -238,25 +337,46 @@ cd <项目目录> && cmd //c "chcp 65001 >nul && gcc no.c -g -Wall -o no.exe && 
         "c": "chcp 65001 >nul && cd /d $dirWithoutTrailingSlash && gcc $fileName -g -Wall -o $fileNameWithoutExt.exe && $fileNameWithoutExt.exe",
         "cpp": "chcp 65001 >nul && cd /d $dirWithoutTrailingSlash && g++ $fileName -g -Wall -o $fileNameWithoutExt.exe && $fileNameWithoutExt.exe"
     },
-    "terminal.integrated.defaultProfile.windows": "Command Prompt"
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "C_Cpp.default.compilerPath": "${env:LOCALAPPDATA}/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gcc.exe",
+    "C_Cpp.default.cStandard": "c17",
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.intelliSenseMode": "windows-gcc-x64",
+    "files.encoding": "utf8",
+    "files.autoGuessEncoding": true
 }
 ```
 
 > 每条命令开头的 `chcp 65001 >nul` 是**故障 E 的防线**：中文输出环境一步到位，
 > 免去逐个文件改编码。国内教学场景（源文件多为 UTF-8 + 学员写中文提示）建议**默认带上**。
 
-项目级 `.vscode/` 模板见 `assets/` 目录，直接复制到项目根目录使用。
+### 项目级模板（`assets/` 目录）
 
-> `assets/launch.json` 与 `assets/tasks.json` **已预填本机真实路径**：
-> - `miDebuggerPath` 指向本机 WinGet 安装的 gdb 绝对路径（换机器需改）
-> - `tasks.json` 同时含 `gcc`（默认）与 `g++` 两条构建任务，C / C++ 都能编译
->
-> 因此下文「体检中容易漏掉的 3 个结构性问题 → C」在实际交付时，直接用 `assets/tasks.json` 覆盖即可修好。
+| 文件 | 用途 | 关键设计 |
+|---|---|---|
+| `assets/tasks.json` | 构建任务 | 含 `gcc`（默认）与 `g++` 两条，C / C++ 都能编译 |
+| `assets/launch.json` | 调试配置 | `console: integratedTerminal`（解决 F5 中文）；`preLaunchTask` 与 tasks 的 label **严格对齐** |
+| `assets/c_cpp_properties.json` | 智能提示 | 编译器路径 + C17/C++17 + `windows-gcc-x64` |
+| `assets/vscode-settings.json` | 工作区设置 | `files.defaultLanguage: c`（新建文件默认按 C 高亮） |
+| `assets/snippets-c.json` | 代码片段 | `main` / `pf` / `sf` / `for` / `while` / `if` |
+| `assets/user-settings.json` | 用户级全局 | 见上方 |
 
-## 环境体检（只读诊断）流程
+> **所有模板用 `${env:LOCALAPPDATA}` 而非硬编码 `C:\Users\<用户名>`**，
+> 换机器可直接复用，无需改路径（仅 WinGet 哈希目录名可能不同，需先 `ls` 确认）。
 
-当用户要求「看看我的 VS Code 能不能用 / 能不能编译 / 能不能调试」时，先做**只读**体检，
-**不改任何文件**，出报告，等用户下指令再动手。
+> `assets/tasks.json` 同时含 `gcc`（默认）与 `g++` 两条构建任务，
+> 因此下文「体检中容易漏掉的 3 个结构性问题 → C」在实际交付时，
+> 直接用 `assets/tasks.json` 覆盖即可修好。
+
+## 环境体检 / 配置后自检（只读诊断）流程
+
+两种场景共用：
+
+- **配置前体检**：用户要求「看看我的 VS Code 能不能用」→ 判断缺什么，决定配置从哪一步开始
+- **配置后自检**：刚配完，验证是否真的可用 → 完整跑一遍确认交付质量
+
+无论哪种，**先做只读检查，不改任何文件**，出报告，等用户下指令再动手。
+（配置后的自检脚本见 `references/step5-verify.md`，可直接复制运行。）
 
 ### 体检五步
 
@@ -275,6 +395,23 @@ rm -rf "$TMPD"
 ```
 
 > 只改配置不实测 = 未验证。必须亲自跑通「编译 → 运行 → 断点命中 → 变量可读」才算通过。
+
+### 配置后自检的四组断言
+
+配置刚做完时，除上面五步外还要逐条断言（脚本见 `references/step5-verify.md`）：
+
+| 组 | 断言内容 |
+|---|---|
+| 1 配置语法 | 6 个配置文件剥注释后均可解析为合法 JSON |
+| 2 三项防线 | executorMap 含 `chcp 65001` 前置、`cd /d`、`$dirWithoutTrailingSlash`（且无裸 `$dir`） |
+| 3 联动一致 | `launch.preLaunchTask` ∈ `tasks` 的 label 集合 |
+| 4 跨盘符实测 | 从 C 盘出发编译 D 盘项目：修复前静默无输出、修复后正常输出中文 |
+
+> **第 4 组是故障 C 的直接证据**。它的破坏力在于**静默**——
+> 命令跑完毫无输出、也不报错，比报错更难查。务必实测。
+
+输出报告见 `references/environment-report-template.md`（配置交付）
+或 `references/diagnosis-template.md`（只读体检）。
 
 ### 体检中容易漏掉的 3 个结构性问题
 
@@ -373,7 +510,41 @@ D:\CppProjects\           ← 所有作业的根目录
 
 Windows 中文输入法在终端中可能吃掉回车或字符。输入前提醒切换英文输入法。
 
-## 详细诊断报告模板
+## 详细文档与模板索引
 
-交付给用户的完整诊断报告模板见 `references/diagnosis-template.md`。
-文件组织规范的完整说明模板见 `references/file-location-guide.md`。
+### `assets/` —— 可直接复制的配置模板
+
+| 文件 | 复制到哪里 |
+|---|---|
+| `assets/user-settings.json` | `%APPDATA%\Code\User\settings.json` |
+| `assets/snippets-c.json` | `%APPDATA%\Code\User\snippets\c.json` |
+| `assets/tasks.json` | `<项目>\.vscode\tasks.json` |
+| `assets/launch.json` | `<项目>\.vscode\launch.json` |
+| `assets/c_cpp_properties.json` | `<项目>\.vscode\c_cpp_properties.json` |
+| `assets/vscode-settings.json` | `<项目>\.vscode\settings.json` |
+
+### `references/` —— 分步操作指引与报告模板
+
+| 文件 | 内容 |
+|---|---|
+| `step1-prereq-check.md` | 第 1 步：环境现状检查命令与判读规则 |
+| `step2-install-toolchain.md` | 第 2 步：MinGW-w64 安装（winget / 离线） |
+| `step3-install-extensions.md` | 第 3 步：扩展安装（含离线 .vsix 与断点续传） |
+| `step4-write-config.md` | 第 4 步：配置文件写入与联动一致性 |
+| `step5-verify.md` | 第 5 步：配置后自检（**含可直接运行的校验脚本**） |
+| `environment-report-template.md` | 配置交付报告模板 |
+| `diagnosis-template.md` | 只读体检报告模板 |
+| `file-location-guide.md` | 文件组织规范完整说明 |
+
+---
+
+## 本 skill 的自我校验清单
+
+改完本 skill 或据此交付后，逐条确认：
+
+- [ ] `assets/` 四个项目级模板齐全，且 `tasks.json` 含 gcc + g++ 两条任务
+- [ ] `assets/launch.json` 的 `preLaunchTask` 与 `assets/tasks.json` 的某个 `label` 一致
+- [ ] 模板中未出现硬编码用户名（应统一用 `${env:LOCALAPPDATA}`）
+- [ ] `references/` 五步文档与两个报告模板齐全
+- [ ] executorMap 三项防线齐全（chcp 前置 / cd /d / $dirWithoutTrailingSlash）
+- [ ] 自检脚本（`step5-verify.md`）能实际跑通并给出通过/失败结论
